@@ -1,0 +1,111 @@
+services:
+  # Portfolio PostgreSQL
+  portfolio-db:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=portfolio_user
+      - POSTGRES_PASSWORD=portfolio_pass
+      - POSTGRES_DB=portfolio_db
+    volumes:
+      - portfolio-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portfolio_user -d portfolio_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Notification PostgreSQL
+  notification-db:
+    image: postgres:16-alpine
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=notification_user
+      - POSTGRES_PASSWORD=notification_pass
+      - POSTGRES_DB=notification_db
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - PORTFOLIO_SERVICE_URL=http://portfolio-service:3001
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3002
+      - NODE_ENV=development
+    depends_on:
+      - portfolio-service
+      - notification-service
+
+  # Portfolio Service
+  portfolio-service:
+    build: ./portfolio-service
+    ports:
+      - "3001:3001"
+    environment:
+      - DATABASE_URL=${PORTFOLIO_DATABASE_URL}
+      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
+      - DB_SYNC=true
+      - NODE_ENV=development
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      portfolio-db:
+        condition: service_healthy
+
+  # Notification Service
+  notification-service:
+    build: ./notification-service
+    ports:
+      - "3002:3002"
+    environment:
+      - DATABASE_URL=${NOTIFICATION_DATABASE_URL}
+      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_TOKEN=${REDIS_TOKEN}
+      - DB_SYNC=true
+      - NODE_ENV=development
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      notification-db:
+        condition: service_healthy
+
+  # UI (React + Vite)
+  ui:
+    build: ./ui
+    ports:
+      - "3003:3003"
+    environment:
+      - VITE_API_URL=http://api-gateway:3000
+      - NODE_ENV=development
+    depends_on:
+      - api-gateway
+
+volumes:
+  portfolio-db-data:
+  notification-db-data:
